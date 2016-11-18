@@ -17,7 +17,8 @@ class Client {
         this._prevUpdateTs = this._updateTs = Date.now();
 
         this._updateMoveDirection_bound = this._updateMoveDirection.bind(this);
-        this._updateMouse_bound = this._updateMouse.bind(this);
+        this._updateMouse_bound         = this._updateMouse.bind(this);
+        this._onMouseDown_bound         = this._onMouseDown.bind(this);
 
         this._avatar = {
             position:      { x: 0, y: 0 },
@@ -44,10 +45,12 @@ class Client {
         if (value) {
             controller.on('change', this._updateMoveDirection_bound);
             controller.on('mousemove', this._updateMouse_bound);
+            controller.on('mousedown', this._onMouseDown_bound);
             this._updateMoveDirection(controller.getState());
         } else {
             controller.off('change', this._updateMoveDirection_bound);
             controller.off('mousemove', this._updateMouse_bound);
+            controller.onf('mousedown', this._onMouseDown_bound);
             this._resetMoveDirection();
         }
     }
@@ -221,6 +224,16 @@ class Client {
             }
 
             this._avatar.lookDirection = angle;
+        }
+    }
+
+    _onMouseDown(absolutePoint, target) {
+        //this._updateMouse(absolutePoint, target);
+
+        if (target === this._canvas) {
+            this._connection.sendMessageToServer('shoot', {
+
+            });
         }
     }
 
