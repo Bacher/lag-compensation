@@ -13,9 +13,10 @@ class Controller {
         this._state = {};
 
         this._callbacks = {
-            'keydown': [],
-            'keyup':   [],
-            'change':  []
+            'keydown':   [],
+            'keyup':     [],
+            'change':    [],
+            'mousemove': []
         };
     }
 
@@ -48,6 +49,19 @@ class Controller {
 
                 for (let callback of this._callbacks['change']) {
                     callback(this._state);
+                }
+            }
+        });
+
+        document.addEventListener('mousemove', e => {
+            if (e.target.tagName === 'CANVAS') {
+                const point = {
+                    x: e.pageX,
+                    y: e.pageY
+                };
+
+                for (let callback of this._callbacks['mousemove']) {
+                    callback(point, e.target);
                 }
             }
         });

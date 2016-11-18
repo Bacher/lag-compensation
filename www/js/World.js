@@ -70,13 +70,17 @@ class World {
                         position: {
                             x: delta,
                             y: delta
-                        }
+                        },
+                        lookDirection: 0
                     });
 
                     break;
-                case 'updateState':
-                    this._getClient(msg.data.clientId).position = msg.data.state.position;
+                case 'updateState': {
+                    const clientModel = this._getClient(msg.data.clientId);
+                    clientModel.position      = msg.data.state.position;
+                    clientModel.lookDirection = msg.data.state.lookDirection;
                     break;
+                }
             }
         }
 

@@ -12,11 +12,13 @@ class Server {
                 this._world.addClient(clientConnection);
                 break;
             case 'updateState':
-                this._world.updateClientState(clientConnection, {
-                    position: data
-                });
+                this._world.updateClientState(clientConnection, data);
                 break;
         }
+    }
+
+    getClientsPositions() {
+        return this._world._getCurFrame().clients;
     }
 
 }

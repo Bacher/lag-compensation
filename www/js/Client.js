@@ -12,11 +12,12 @@ class Client {
         this._canvas.width  = Client.CANVAS_WIDTH;
         this._canvas.height = Client.CANVAS_HEIGHT;
 
-        this._active       = false;
+        this.isActive       = false;
         this._firstUpdate  = true;
         this._prevUpdateTs = this._updateTs = Date.now();
 
         this._updateMoveDirection_bound = this._updateMoveDirection.bind(this);
+        this._updateMouse_bound = this._updateMouse.bind(this);
 
         this._avatar = {
             position:      { x: 0, y: 0 },
@@ -32,19 +33,21 @@ class Client {
     }
 
     setActive(value) {
-        if (this._active === value) {
+        if (this.isActive === value) {
             return;
         }
 
-        this._active = value;
+        this.isActive = value;
 
         this._canvas.classList.toggle('active', value);
 
         if (value) {
             controller.on('change', this._updateMoveDirection_bound);
+            controller.on('mousemove', this._updateMouse_bound);
             this._updateMoveDirection(controller.getState());
         } else {
             controller.off('change', this._updateMoveDirection_bound);
+            controller.off('mousemove', this._updateMouse_bound);
             this._resetMoveDirection();
         }
     }
@@ -79,8 +82,9 @@ class Client {
         }
 
         for (let client of this._clients) {
-            client.cur.position.x = client.prev.position.x + (client.last.position.x - client.prev.position.x) * d;
-            client.cur.position.y = client.prev.position.y + (client.last.position.y - client.prev.position.y) * d;
+            client.cur.position.x    = client.prev.position.x + (client.last.position.x - client.prev.position.x) * d;
+            client.cur.position.y    = client.prev.position.y + (client.last.position.y - client.prev.position.y) * d;
+            client.cur.lookDirection = client.prev.lookDirection + (client.last.lookDirection - client.prev.lookDirection) * d;
         }
     }
 
@@ -92,35 +96,85 @@ class Client {
 
         this._drawClients(ctx);
         this._drawPlayer(ctx);
+        this._drawRealClientsPositions(ctx);
+        this._drawServerClientsPositions(ctx);
     }
 
-    _drawClients(ctx, d) {
+    _drawClients(ctx) {
         for (let client of this._clients) {
-            ctx.save();
-
-            ctx.strokeStyle = '#00F';
-            ctx.translate(client.cur.position.x, client.cur.position.y);
-            ctx.beginPath();
-            ctx.arc(0, 0, Client.AVATAR_R, 0, 2 * Math.PI);
-            ctx.stroke();
-
-            ctx.restore();
+            this._drawGameClient(ctx, client.cur, false);
         }
     }
 
-    _drawPlayer(ctx) {
+    _drawGameClient(ctx, clientModel, isPlayer) {
         ctx.save();
 
         ctx.strokeStyle = '#000';
-        ctx.translate(this._avatar.position.x, this._avatar.position.y);
+        ctx.translate(clientModel.position.x, clientModel.position.y);
         ctx.beginPath();
         ctx.arc(0, 0, Client.AVATAR_R, 0, 2 * Math.PI);
+
+        if (isPlayer) {
+            ctx.fillStyle = '#C0FFB6';
+            ctx.fill();
+        }
+
         ctx.stroke();
 
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(Math.sin(this._avatar.direction) * Client.AVATAR_DIRECTION_SIZE, -Math.cos(this._avatar.direction) * Client.AVATAR_DIRECTION_SIZE);
+        ctx.lineTo(Math.sin(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE, -Math.cos(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE);
         ctx.stroke();
+
+        ctx.restore();
+    }
+
+    _drawPlayer(ctx) {
+        this._drawGameClient(ctx, this._avatar, true);
+    }
+
+    _drawRealClientsPositions(ctx) {
+        for (let [id, client] of clients) {
+            if (id !== this._id) {
+                this._drawCross(ctx, client._avatar.position, '#777');
+            }
+        }
+    }
+
+    _drawServerClientsPositions(ctx) {
+        for (let client of server.getClientsPositions()) {
+            this._drawCross(ctx, client.position, '#0F0');
+        }
+    }
+
+    _drawCross(ctx, position, color) {
+        ctx.save();
+
+        ctx.translate(position.x, position.y);
+
+        // ctx.beginPath();
+        // ctx.strokeStyle = color;
+        // ctx.lineWidth = 2;
+        // ctx.moveTo(-10, 0);
+        // ctx.lineTo(10, 0);
+        // ctx.moveTo(0, -10);
+        // ctx.lineTo(0, 10);
+        // ctx.stroke();
+
+        ctx.strokeStyle = '#000';
+        ctx.fillStyle = color;
+
+        ctx.beginPath();
+        ctx.rect(-8, -1, 16, 2);
+        ctx.stroke();
+        ctx.rect(-1, -8, 2, 16);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.rect(-8, -1, 16, 2);
+        ctx.fill();
+        ctx.rect(-1, -8, 2, 16);
+        ctx.fill();
 
         ctx.restore();
     }
@@ -149,12 +203,36 @@ class Client {
         this._avatar.moveDirection = vector;
     }
 
+    _updateMouse(absolutePoint, target) {
+        if (target === this._canvas) {
+            const point = {
+                x: absolutePoint.x - this._canvas.offsetTop,
+                y: absolutePoint.y - this._canvas.offsetLeft
+            };
+
+            // Инвертируем, так как в canvas
+            const dx = point.x - this._avatar.position.x;
+            const dy = point.y - this._avatar.position.y;
+
+            let angle = -Math.atan(dx / dy);
+
+            if (dy > 0) {
+                angle += Math.PI;
+            }
+
+            this._avatar.lookDirection = angle;
+        }
+    }
+
     _resetMoveDirection() {
         this._avatar.moveDirection = { x: 0, y: 0 };
     }
 
     _sendUpdate() {
-        this._connection.sendMessageToServer('updateState', this._avatar.position);
+        this._connection.sendMessageToServer('updateState', {
+            position:      this._avatar.position,
+            lookDirection: this._avatar.lookDirection
+        });
     }
 
     onServerMessage(eventName, data) {
@@ -163,21 +241,22 @@ class Client {
                 for (let clientModel of data.clients) {
                     if (this._firstUpdate) {
                         if (clientModel.id === this._id) {
-                            this._avatar.position = {
-                                x: clientModel.position.x,
-                                y: clientModel.position.y
-                            };
+                            this._avatar.position      = clientModel.position;
+                            this._avatar.lookDirection = clientModel.lookDirection;
                         } else {
                             this._clients.push({
                                 id:   clientModel.id,
                                 prev: {
-                                    position: clientModel.position
+                                    position:      clientModel.position,
+                                    lookDirection: clientModel.lookDirection
+                                },
+                                cur:  {
+                                    position:      _.clone(clientModel.position),
+                                    lookDirection: clientModel.lookDirection
                                 },
                                 last: {
-                                    position: clientModel.position
-                                },
-                                cur: {
-                                    position: _.clone(clientModel.position)
+                                    position:      clientModel.position,
+                                    lookDirection: clientModel.lookDirection
                                 }
                             });
                         }
@@ -185,8 +264,11 @@ class Client {
                         // UPDATE
                         for (let client of this._clients) {
                             if (client.id === clientModel.id) {
-                                client.prev.position = client.last.position;
-                                client.last.position = clientModel.position;
+                                client.prev = client.last;
+                                client.last = {
+                                    position:      clientModel.position,
+                                    lookDirection: clientModel.lookDirection
+                                };
                             }
                         }
                     }
