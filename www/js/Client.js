@@ -57,7 +57,7 @@ class Client {
         setInterval(() => {
             this._prevUpdateTs = this._updateTs;
             this._updateTs = Date.now();
-            this._update(this._updateTs - this._prevUpdateTs);
+            this._update(this._updateTs, this._updateTs - this._prevUpdateTs);
             this._draw();
         }, 1000 / Client.FPS);
 
@@ -66,11 +66,22 @@ class Client {
         }, 1000 / Client.CMD_UPDATE_RATE);
     }
 
-    _update(timeDelta) {
+    _update(ts, timeDelta) {
         const moveDistance = timeDelta * Client.SPEED / 1000;
 
         this._avatar.position.x += this._avatar.moveDirection.x * moveDistance;
         this._avatar.position.y += this._avatar.moveDirection.y * moveDistance;
+
+        let d = (ts - this._worldUpdateTs) / (1000 / World.RATE);
+
+        if (d > 1) {
+            d = 1;
+        }
+
+        for (let client of this._clients) {
+            client.cur.position.x = client.prev.position.x + (client.last.position.x - client.prev.position.x) * d;
+            client.cur.position.y = client.prev.position.y + (client.last.position.y - client.prev.position.y) * d;
+        }
     }
 
     _draw() {
@@ -83,12 +94,12 @@ class Client {
         this._drawPlayer(ctx);
     }
 
-    _drawClients(ctx) {
+    _drawClients(ctx, d) {
         for (let client of this._clients) {
             ctx.save();
 
             ctx.strokeStyle = '#00F';
-            ctx.translate(client.last.position.x, client.last.position.y);
+            ctx.translate(client.cur.position.x, client.cur.position.y);
             ctx.beginPath();
             ctx.arc(0, 0, Client.AVATAR_R, 0, 2 * Math.PI);
             ctx.stroke();
@@ -164,6 +175,9 @@ class Client {
                                 },
                                 last: {
                                     position: clientModel.position
+                                },
+                                cur: {
+                                    position: _.clone(clientModel.position)
                                 }
                             });
                         }
@@ -171,6 +185,7 @@ class Client {
                         // UPDATE
                         for (let client of this._clients) {
                             if (client.id === clientModel.id) {
+                                client.prev.position = client.last.position;
                                 client.last.position = clientModel.position;
                             }
                         }
@@ -181,7 +196,8 @@ class Client {
                     this._initialize();
                 }
 
-                this._firstUpdate = false;
+                this._firstUpdate   = false;
+                this._worldUpdateTs = Date.now();
 
                 break;
             }
@@ -198,8 +214,8 @@ Client.CANVAS_HEIGHT = 200;
 Client.AVATAR_R = 20;
 Client.AVATAR_DIRECTION_SIZE = 30;
 
-Client.FPS = 5;
-Client.CMD_UPDATE_RATE = 5;
+Client.FPS = 60;
+Client.CMD_UPDATE_RATE = 30;
 Client.ONE_WAY_DELAY = 150;
 
 Client.SPEED = 100;

@@ -1,8 +1,6 @@
 
 class World {
 
-    static get rate() { return 2; }
-
     constructor() {
         this._curFrameId    = 0;
         this._curFrameIndex = 0;
@@ -31,7 +29,7 @@ class World {
     startSimulation() {
         this._intervalId = setInterval(() => {
             this._process();
-        }, 1000 / World.rate);
+        }, 1000 / World.RATE);
     }
 
     stopSimulation() {
@@ -125,3 +123,5 @@ class World {
     }
 
 }
+
+World.RATE = 30;
