@@ -8,7 +8,8 @@ class World {
 
         this._frames = [{
             frameId: this._curFrameId,
-            clients: []
+            clients: [],
+            shoots: []
         }];
 
         this._connectedClients = [];
@@ -76,9 +77,25 @@ class World {
 
                     break;
                 case 'updateState': {
+                    const state    = msg.data.state;
+                    const clientId = msg.data.clientId;
+
                     const clientModel = this._getClient(msg.data.clientId);
-                    clientModel.position      = msg.data.state.position;
-                    clientModel.lookDirection = msg.data.state.lookDirection;
+                    clientModel.position      = state.position;
+                    clientModel.lookDirection = state.lookDirection;
+
+                    for (let command of state.commands) {
+                        switch (command.type) {
+                            case 'shoot': {
+                                frame.shoots.push({
+                                    clientId: clientId,
+                                    from:     state.position,
+                                    to:       command.to
+                                });
+                                break;
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -122,7 +139,8 @@ class World {
 
         return this._frames[this._curFrameIndex] = {
             id:      this._curFrameId,
-            clients: _.cloneDeep(curFrame.clients)
+            clients: _.cloneDeep(curFrame.clients),
+            shoots:  _.cloneDeep(curFrame.shoots)
         };
     }
 

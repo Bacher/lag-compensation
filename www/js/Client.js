@@ -20,6 +20,12 @@ class Client {
         this._updateMouse_bound         = this._updateMouse.bind(this);
         this._onMouseDown_bound         = this._onMouseDown.bind(this);
 
+        this._shooting = false;
+        this._shootingPoint = null;
+
+        this._updateCmdRemains = 0;
+        this._updateEvery = 1000 / Client.CMD_UPDATE_RATE;
+
         this._avatar = {
             position:      { x: 0, y: 0 },
             moveDirection: { x: 0, y: 0 },
@@ -27,6 +33,7 @@ class Client {
         };
 
         this._clients = [];
+        this._shoots = [];
 
         container.appendChild(this._canvas);
 
@@ -50,7 +57,7 @@ class Client {
         } else {
             controller.off('change', this._updateMoveDirection_bound);
             controller.off('mousemove', this._updateMouse_bound);
-            controller.onf('mousedown', this._onMouseDown_bound);
+            controller.off('mousedown', this._onMouseDown_bound);
             this._resetMoveDirection();
         }
     }
@@ -66,13 +73,25 @@ class Client {
             this._update(this._updateTs, this._updateTs - this._prevUpdateTs);
             this._draw();
         }, 1000 / Client.FPS);
-
-        setInterval(() => {
-            this._sendUpdate();
-        }, 1000 / Client.CMD_UPDATE_RATE);
     }
 
     _update(ts, timeDelta) {
+        let needSendUpdate = false;
+
+        if (this._updateCmdRemains <= 0) {
+            needSendUpdate = true;
+            this._updateCmdRemains = this._updateEvery;
+        } else {
+            this._updateCmdRemains -= timeDelta;
+        }
+
+        if (needSendUpdate && this._shooting) {
+            this._shootingLine = {
+                from: { x: this._avatar.position.x, y: this._avatar.position.y },
+                to:   this._shootingPoint
+            };
+        }
+
         const moveDistance = timeDelta * Client.SPEED / 1000;
 
         this._avatar.position.x += this._avatar.moveDirection.x * moveDistance;
@@ -80,14 +99,18 @@ class Client {
 
         let d = (ts - this._worldUpdateTs) / (1000 / World.RATE);
 
-        if (d > 1) {
-            d = 1;
+        if (d > 1.25) {
+            d = 1.25;
         }
 
         for (let client of this._clients) {
             client.cur.position.x    = client.prev.position.x + (client.last.position.x - client.prev.position.x) * d;
             client.cur.position.y    = client.prev.position.y + (client.last.position.y - client.prev.position.y) * d;
             client.cur.lookDirection = client.prev.lookDirection + (client.last.lookDirection - client.prev.lookDirection) * d;
+        }
+
+        if (needSendUpdate) {
+            this._sendUpdate();
         }
     }
 
@@ -99,6 +122,8 @@ class Client {
 
         this._drawClients(ctx);
         this._drawPlayer(ctx);
+        this._drawShoots(ctx);
+        this._drawMyShootingLine(ctx);
         this._drawRealClientsPositions(ctx);
         this._drawServerClientsPositions(ctx);
     }
@@ -134,6 +159,26 @@ class Client {
 
     _drawPlayer(ctx) {
         this._drawGameClient(ctx, this._avatar, true);
+    }
+
+    _drawShoots(ctx) {
+        for (let shoot of this._shoots) {
+            this._drawShootingLine(ctx, shoot, '#00F');
+        }
+    }
+
+    _drawMyShootingLine(ctx) {
+        if (this._shootingLine) {
+           this._drawShootingLine(ctx, this._shootingLine);
+        }
+    }
+
+    _drawShootingLine(ctx, shoot, color) {
+        ctx.strokeStyle = color || '#F00';
+        ctx.beginPath();
+        ctx.moveTo(shoot.from.x, shoot.from.y);
+        ctx.lineTo(shoot.to.x, shoot.to.y);
+        ctx.stroke();
     }
 
     _drawRealClientsPositions(ctx) {
@@ -208,10 +253,7 @@ class Client {
 
     _updateMouse(absolutePoint, target) {
         if (target === this._canvas) {
-            const point = {
-                x: absolutePoint.x - this._canvas.offsetTop,
-                y: absolutePoint.y - this._canvas.offsetLeft
-            };
+            const point = this._getLocalCoordinates(absolutePoint);
 
             // Инвертируем, так как в canvas
             const dx = point.x - this._avatar.position.x;
@@ -228,13 +270,17 @@ class Client {
     }
 
     _onMouseDown(absolutePoint, target) {
-        //this._updateMouse(absolutePoint, target);
-
         if (target === this._canvas) {
-            this._connection.sendMessageToServer('shoot', {
-
-            });
+            this._shooting      = true;
+            this._shootingPoint = this._getLocalCoordinates(absolutePoint);
         }
+    }
+
+    _getLocalCoordinates(absolutePoint) {
+        return {
+            x: absolutePoint.x - this._canvas.offsetTop,
+            y: absolutePoint.y - this._canvas.offsetLeft
+        };
     }
 
     _resetMoveDirection() {
@@ -242,10 +288,24 @@ class Client {
     }
 
     _sendUpdate() {
+        const commands = [];
+
+        if (this._shooting) {
+            commands.push({
+                type: 'shoot',
+                to:   this._shootingPoint
+            });
+        }
+
         this._connection.sendMessageToServer('updateState', {
             position:      this._avatar.position,
-            lookDirection: this._avatar.lookDirection
+            lookDirection: this._avatar.lookDirection,
+            commands:      commands
         });
+
+        if (this._shooting) {
+            this._shooting = false;
+        }
     }
 
     onServerMessage(eventName, data) {
@@ -284,6 +344,14 @@ class Client {
                                 };
                             }
                         }
+                    }
+                }
+
+                this._shoots = [];
+
+                for (let shoot of data.shoots) {
+                    if (shoot.clientId !== this._id) {
+                        this._shoots.push(shoot);
                     }
                 }
 
