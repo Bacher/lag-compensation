@@ -34,7 +34,7 @@ function render() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.translate(0.5, 200.5);
+    ctx.translate(-0.5, 199.5);
 
     ctx.beginPath();
     ctx.moveTo(0, 0);
