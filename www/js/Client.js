@@ -278,8 +278,8 @@ class Client {
 
     _getLocalCoordinates(absolutePoint) {
         return {
-            x: absolutePoint.x - this._canvas.offsetTop,
-            y: absolutePoint.y - this._canvas.offsetLeft
+            x: absolutePoint.x - this._canvas.offsetLeft,
+            y: absolutePoint.y - this._canvas.offsetTop
         };
     }
 
