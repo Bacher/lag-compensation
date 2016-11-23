@@ -350,9 +350,7 @@ class Client {
                 this._shoots = [];
 
                 for (let shoot of data.shoots) {
-                    if (shoot.clientId !== this._id) {
-                        this._shoots.push(shoot);
-                    }
+                    this._shoots.push(shoot);
                 }
 
                 if (this._firstUpdate) {
@@ -378,7 +376,7 @@ Client.AVATAR_R = 20;
 Client.AVATAR_DIRECTION_SIZE = 30;
 
 Client.FPS = 60;
-Client.CMD_UPDATE_RATE = 30;
+Client.CMD_UPDATE_RATE = 33;
 Client.ONE_WAY_DELAY = 150;
 
 Client.SPEED = 100;

@@ -30,7 +30,7 @@ class World {
     startSimulation() {
         this._intervalId = setInterval(() => {
             this._process();
-        }, 1000 / World.RATE);
+        }, 1000 / World.TICK_RATE);
     }
 
     stopSimulation() {
@@ -146,4 +146,4 @@ class World {
 
 }
 
-World.RATE = 30;
+World.TICK_RATE = 33;
