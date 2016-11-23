@@ -97,7 +97,7 @@ class Client {
         this._avatar.position.x += this._avatar.moveDirection.x * moveDistance;
         this._avatar.position.y += this._avatar.moveDirection.y * moveDistance;
 
-        let d = (ts - this._worldUpdateTs) / (1000 / World.RATE);
+        let d = (ts - this._worldUpdateTs) / (1000 / World.TICK_RATE);
 
         if (d > 1.25) {
             d = 1.25;
