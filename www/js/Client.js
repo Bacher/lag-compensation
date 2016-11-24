@@ -12,7 +12,7 @@ class Client {
         this._canvas.width  = Client.CANVAS_WIDTH;
         this._canvas.height = Client.CANVAS_HEIGHT;
 
-        this.isActive       = false;
+        this.isActive      = false;
         this._firstUpdate  = true;
         this._prevUpdateTs = this._updateTs = Date.now();
 
@@ -33,7 +33,7 @@ class Client {
         };
 
         this._clients = [];
-        this._shoots = [];
+        this._shoots  = [];
 
         container.appendChild(this._canvas);
 
