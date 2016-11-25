@@ -1,5 +1,13 @@
 const SIN_P4 = 0.7071067811865475;
 
+const SMOOTH_TYPE = {
+    INTERPOLATION: 1,
+    EXTRAPOLATION: 2,
+    EXTRA_IN_INTERPOLATION: 3
+};
+
+const EXTRAPOLATION_PERIOD = 250; // ms
+
 class Client {
 
     constructor(container, id) {
@@ -34,6 +42,7 @@ class Client {
         this._snapshots = [];
         this._clients   = [];
         this._shoots    = [];
+        this._extrapolation = null;
 
         this._interpolationStartTs = null;
         this._speed = 1;
@@ -41,15 +50,23 @@ class Client {
         this._currentTick = null;
         this._currentIndex = 0;
 
-        this._frameType = null;
-
         this._fps = '';
         this._fpsFramesCount = 0;
         this._fpsStartTs = null;
 
+        this._isFirstRender = true;
+
+        this._type = SMOOTH_TYPE.INTERPOLATION;
+
         container.appendChild(this._canvas);
 
         this._connect();
+    }
+
+    log(...args) {
+        if (this._id === 2) {
+            console.log(...args);
+        }
     }
 
     setActive(value) {
@@ -106,6 +123,8 @@ class Client {
             this._fpsStartTs += 1000;
         }
 
+        this._isFirstRender = false;
+
         this._fpsFramesCount++;
     }
 
@@ -119,46 +138,153 @@ class Client {
 
     _update(now, timeDelta) {
         let d;
+        let curSnapshot;
+        let nextSnapshot;
 
-        if (this._interpolationStartTs) {
-            if (now >= this._interpolationEndTs) {
-                this._currentIndex++;
-                this._interpolationStartTs = null;
+        if (this._isFirstRender) {
+            this._speed = 1;
+            this._interpolationStartTs = now;
+            this._interpolationEndTs   = now + (1000 / World.TICK_RATE);
 
-                if (this._snapshots.length - this._currentIndex >= 2) {
-                    this._startNextInterpolation();
+            d = 0;
+
+            curSnapshot  = this._snapshots[this._currentIndex];
+            nextSnapshot = this._snapshots[this._currentIndex + 1];
+
+        } else {
+            if (this._type === SMOOTH_TYPE.EXTRA_IN_INTERPOLATION) {
+                // Если переход завершен, то переходим к интерполяции
+                if (now >= this._interpolationEndTs) {
+                    this._type = SMOOTH_TYPE.INTERPOLATION;
+
+                    //this._currentIndex++;
+
+                    // COPY PAST FROM INTERPOLATION SECTION
+                    const bufferSize = this._snapshots.length - this._currentIndex;
+
+                    if (bufferSize < 3) {
+                        this._speed = 0.9
+                    } else if (bufferSize === 3) {
+                        this._speed = 1;
+                    } else {
+                        this._speed = 1.1;
+                    }
+
+                    this._interpolationStartTs = this._interpolationEndTs;
+                    this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE) / this._speed;
+
+                    if (!this._interpolationStartTs) {
+                        debugger
+                    }
+                    d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                    curSnapshot  = this._snapshots[this._currentIndex];
+                    nextSnapshot = this._snapshots[this._currentIndex + 1];
+
+                // В противном случае продолжаем переход
                 } else {
-                    this._extrapolite(now, timeDelta);
-                    return;
+                    d = (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                    curSnapshot  = this._extrapolation;
+                    nextSnapshot = this._snapshots[this._currentIndex];
+                }
+
+            } else if (this._type === SMOOTH_TYPE.EXTRAPOLATION) {
+                // если появились пакеты в буфере, то начинаем переход от экстра- к интерполяции
+                if (this._snapshots.length - this._currentIndex >= 2) {
+                    this._extrapolation = {
+                        clients: this._clients.map(client => _.cloneDeep(client))
+                    };
+
+                    this._interpolationStartTs = now;
+                    this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE);
+                    d = 0;
+
+                    curSnapshot  = this._snapshots[this._currentIndex - 1];
+                    nextSnapshot = this._snapshots[this._currentIndex];
+
+                    this._type = SMOOTH_TYPE.EXTRA_IN_INTERPOLATION;
+                } else {
+                    // Иначе продолжаем экстраполяцию, но не далее 250ms
+
+                    if (now >= this._interpolationEndTs) {
+                        d = 1 + EXTRAPOLATION_PERIOD / (1000 / World.TICK_RATE);
+                    } else {
+                        d = 1 + (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                    }
+
+                    curSnapshot  = this._snapshots[this._currentIndex - 1];
+                    nextSnapshot = this._snapshots[this._currentIndex];
+                }
+
+            } else if (this._type === SMOOTH_TYPE.INTERPOLATION) {
+                if (now >= this._interpolationEndTs) {
+                    this._currentIndex++;
+
+                    // Если в буфере хватает кадров, то просто интерполируем
+                    if (this._snapshots.length - this._currentIndex >= 2) {
+                        const bufferSize = this._snapshots.length - this._currentIndex;
+
+                        if (bufferSize < 3) {
+                            this._speed = 0.9
+                        } else if (bufferSize === 3) {
+                            this._speed = 1;
+                        } else {
+                            this._speed = 1.1;
+                        }
+
+                        this._interpolationStartTs = this._interpolationEndTs;
+                        this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE) / this._speed;
+
+                        if (!this._interpolationStartTs) {
+                            debugger
+                        }
+                        d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                        curSnapshot  = this._snapshots[this._currentIndex];
+                        nextSnapshot = this._snapshots[this._currentIndex + 1];
+
+                    // Если нет, то переходим в экстраполяцию
+                    } else {
+                        this._type = SMOOTH_TYPE.EXTRAPOLATION;
+                        this._interpolationStartTs = this._interpolationEndTs;
+                        this._interpolationEndTs   = this._interpolationStartTs + EXTRAPOLATION_PERIOD;
+
+                        if (now >= this._interpolationEndTs) {
+                            d = 1 + EXTRAPOLATION_PERIOD / (1000 / World.TICK_RATE);
+                        } else {
+                            d = 1 + (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                        }
+
+                        curSnapshot  = this._snapshots[this._currentIndex - 1];
+                        nextSnapshot = this._snapshots[this._currentIndex];
+
+                        if (!curSnapshot) {
+                            debugger
+                        }
+                    }
+
+                } else {
+                    if (!this._interpolationStartTs) {
+                        debugger
+                    }
+                    d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                    curSnapshot  = this._snapshots[this._currentIndex];
+                    nextSnapshot = this._snapshots[this._currentIndex + 1];
                 }
             }
-
-            d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-
-            if (d > 1.15) {
-                debugger
-            }
-
-        } else {
-            if (this._snapshots.length - this._currentIndex >= 2) {
-                this._startNextInterpolation(now);
-                d = 0;
-            } else {
-                this._extrapolite(now, timeDelta);
-                return;
-            }
         }
 
-        // Interpolation
+        this.log('RENDER', this._type, 'd:', d);
 
-        if (d >= 1) {
-            this._frameType = 'extr';
-        } else {
-            this._frameType = 'int';
+        if (d > 5) {
+            //debugger
         }
 
-        const curSnapshot  = this._snapshots[this._currentIndex];
-        const nextSnapshot = this._snapshots[this._currentIndex + 1];
+        if (!curSnapshot) {
+            debugger
+        }
 
         for (let i = 0; i < curSnapshot.clients.length; i++) {
             if (i === this._avatar.index) {
@@ -183,31 +309,8 @@ class Client {
         }
     }
 
-    _extrapolite(now, timeDelta) {
-        // Extrapolation
-        this._frameType = 'extr';
-    }
-
     _startNextInterpolation(now) {
-        const bufferSize = this._snapshots.length - this._currentIndex;
 
-        if (bufferSize < 3) {
-            this._speed = 0.9
-        } else if (bufferSize === 3) {
-            this._speed = 1;
-        } else {
-            this._speed = 1.1;
-        }
-
-        //console.log('_startNextInterpolation', this._interpolationEndTs, this._interpolationStartTs);
-
-        if (now) {
-            this._interpolationStartTs = now;
-        } else {
-            this._interpolationStartTs = this._interpolationEndTs;
-        }
-
-        this._interpolationEndTs = this._interpolationStartTs + this._speed * (1000 / World.TICK_RATE);
     }
 
     _draw() {
@@ -229,7 +332,19 @@ class Client {
         ctx.translate(Client.CANVAS_WIDTH - 20, 20);
         ctx.beginPath();
         ctx.arc(0, 0, 15, 0, 2 * Math.PI);
-        ctx.fillStyle = this._frameType === 'int' ? '#0F0' : '#F00';
+
+        switch(this._type) {
+            case SMOOTH_TYPE.INTERPOLATION:
+                ctx.fillStyle = '#0F0';
+                break;
+            case SMOOTH_TYPE.EXTRAPOLATION:
+                ctx.fillStyle = '#F00';
+                break;
+            case SMOOTH_TYPE.EXTRA_IN_INTERPOLATION:
+                ctx.fillStyle = '#00F';
+                break;
+        }
+
         ctx.fill();
 
         ctx.restore();
