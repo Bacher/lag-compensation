@@ -16,7 +16,7 @@ class ClientConnection {
 
         setTimeout(() => {
             server.onMessage(this, eventName, JSON.parse(json));
-        }, ClientConnection.ONE_WAY_DELAY);
+        }, ClientConnection.ONE_WAY_DELAY + (Math.random() < 0.1 ? 40 : 0));
     }
 
     sendMessageToClient(eventName, data) {
@@ -28,7 +28,7 @@ class ClientConnection {
 
         setTimeout(() => {
             this._client.onServerMessage(eventName, JSON.parse(json));
-        }, ClientConnection.ONE_WAY_DELAY);
+        }, ClientConnection.ONE_WAY_DELAY + (Math.random() < 0.1 ? 40 : 0));
     }
 
 }

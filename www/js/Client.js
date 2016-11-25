@@ -43,6 +43,10 @@ class Client {
 
         this._frameType = null;
 
+        this._fps = '';
+        this._fpsFramesCount = 0;
+        this._fpsStartTs = null;
+
         container.appendChild(this._canvas);
 
         this._connect();
@@ -75,6 +79,8 @@ class Client {
     }
 
     _initialize() {
+        this._fpsStartTs = Date.now();
+
         setInterval(() => {
             this._tick();
         }, 1000 / Client.FPS);
@@ -85,11 +91,22 @@ class Client {
     }
 
     _tick() {
+        const now   = Date.now();
+        const delta = now - this._prevUpdateTs;
+
         this._prevUpdateTs = this._updateTs;
-        this._updateTs     = Date.now();
-        this._updateAvatar(this._updateTs, this._updateTs - this._prevUpdateTs);
-        this._update(this._updateTs, this._updateTs - this._prevUpdateTs);
+        this._updateTs     = now;
+        this._updateAvatar(this._updateTs, delta);
+        this._update(this._updateTs, delta);
         this._draw();
+
+        if (now - this._fpsStartTs >= 1000) {
+            this._fps            = this._fpsFramesCount;
+            this._fpsFramesCount = 0;
+            this._fpsStartTs += 1000;
+        }
+
+        this._fpsFramesCount++;
     }
 
     _updateAvatar(now, timeDelta) {
@@ -101,51 +118,78 @@ class Client {
     }
 
     _update(now, timeDelta) {
-        if (this._snapshots.length - this._currentIndex >= 2) {
-            // Interpolation
+        let d;
 
-            this._frameType = 'int';
+        if (this._interpolationStartTs) {
+            if (now >= this._interpolationEndTs) {
+                this._currentIndex++;
+                this._interpolationStartTs = null;
 
-            if (this._interpolationStartTs) {
-                let d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-
-                if (d >= 1) {
-                    this._currentIndex++;
-                    this._startNextInterpolation(now);
-
+                if (this._snapshots.length - this._currentIndex >= 2) {
+                    this._startNextInterpolation();
                 } else {
-                    const curSnapshot  = this._snapshots[this._currentIndex];
-                    const nextSnapshot = this._snapshots[this._currentIndex + 1];
-
-                    for (let i = 0; i < curSnapshot.clients.length; i++) {
-                        if (i === this._avatar.index) {
-                            continue;
-                        }
-
-                        const cClient = curSnapshot.clients[i];
-                        const nClient = nextSnapshot.clients[i];
-                        const client  = this._clients[i];
-
-                        client.position.x = cClient.position.x + (nClient.position.x - cClient.position.x) * d;
-                        client.position.y = cClient.position.y + (nClient.position.y - cClient.position.y) * d;
-                        client.lookDirection = cClient.lookDirection + (nClient.lookDirection - cClient.lookDirection) * d;
-                    }
+                    this._extrapolite(now, timeDelta);
+                    return;
                 }
-
-            } else {
-                this._startNextInterpolation(now);
             }
+
+            d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+            if (d > 1.15) {
+                debugger
+            }
+
         } else {
-            // Extrapolation
+            if (this._snapshots.length - this._currentIndex >= 2) {
+                this._startNextInterpolation(now);
+                d = 0;
+            } else {
+                this._extrapolite(now, timeDelta);
+                return;
+            }
+        }
+
+        // Interpolation
+
+        if (d >= 1) {
             this._frameType = 'extr';
+        } else {
+            this._frameType = 'int';
+        }
+
+        const curSnapshot  = this._snapshots[this._currentIndex];
+        const nextSnapshot = this._snapshots[this._currentIndex + 1];
+
+        for (let i = 0; i < curSnapshot.clients.length; i++) {
+            if (i === this._avatar.index) {
+                continue;
+            }
+
+            const cClient = curSnapshot.clients[i];
+            const nClient = nextSnapshot.clients[i];
+            let   client  = this._clients[i];
+
+            if (!client) {
+                client = this._clients[i] = {
+                    id:            cClient.id,
+                    position:      _.clone(cClient.position),
+                    lookDirection: cClient.lookDirection
+                };
+            }
+
+            client.position.x = cClient.position.x + (nClient.position.x - cClient.position.x) * d;
+            client.position.y = cClient.position.y + (nClient.position.y - cClient.position.y) * d;
+            client.lookDirection = cClient.lookDirection + (nClient.lookDirection - cClient.lookDirection) * d;
         }
     }
 
-    _startNextInterpolation(now) {
-        const curSnapshot = this._snapshots[this._currentIndex];
-        const bufferSize  = this._snapshots.length - this._currentIndex;
+    _extrapolite(now, timeDelta) {
+        // Extrapolation
+        this._frameType = 'extr';
+    }
 
-        this._interpolationStartTs = now;
+    _startNextInterpolation(now) {
+        const bufferSize = this._snapshots.length - this._currentIndex;
 
         if (bufferSize < 3) {
             this._speed = 0.9
@@ -154,25 +198,16 @@ class Client {
         } else {
             this._speed = 1.1;
         }
-        //console.log(this._speed);
 
-        for (let i = 0; i < curSnapshot.clients.length; i++) {
-            if (i === this._avatar.index) {
-                continue;
-            }
+        //console.log('_startNextInterpolation', this._interpolationEndTs, this._interpolationStartTs);
 
-            const cClient = curSnapshot.clients[i];
-            let client    = this._clients[i];
-
-            if (!client) {
-                client = clients[i] = {
-                    id: cClient.id
-                };
-            }
-
-            client.position      = _.clone(cClient.position);
-            client.lookDirection = cClient.lookDirection;
+        if (now) {
+            this._interpolationStartTs = now;
+        } else {
+            this._interpolationStartTs = this._interpolationEndTs;
         }
+
+        this._interpolationEndTs = this._interpolationStartTs + this._speed * (1000 / World.TICK_RATE);
     }
 
     _draw() {
@@ -198,6 +233,10 @@ class Client {
         ctx.fill();
 
         ctx.restore();
+
+        ctx.font = '20px Arial';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`FPS: ${this._fps}`, Client.CANVAS_WIDTH - 100, 20);
     }
 
     _drawClients(ctx) {
@@ -412,7 +451,7 @@ class Client {
                     this._currentTick = data.tick;
                 }
 
-                if (this._snapshots.length === 2) {
+                if (this._snapshots.length === 3) {
                     this._initialize();
                 }
 
