@@ -20,20 +20,28 @@ class Client {
         this._updateMouse_bound         = this._updateMouse.bind(this);
         this._onMouseDown_bound         = this._onMouseDown.bind(this);
 
-        this._shooting = false;
+        this._lastShootId   = 0;
+        this._shooting      = false;
         this._shootingPoint = null;
 
-        this._updateCmdRemains = 0;
-        this._updateEvery = 1000 / Client.CMD_UPDATE_RATE;
-
         this._avatar = {
+            index:         0,
             position:      { x: 0, y: 0 },
             moveDirection: { x: 0, y: 0 },
             lookDirection: 0
         };
 
-        this._clients = [];
-        this._shoots  = [];
+        this._snapshots = [];
+        this._clients   = [];
+        this._shoots    = [];
+
+        this._interpolationStartTs = null;
+        this._speed = 1;
+
+        this._currentTick = null;
+        this._currentIndex = 0;
+
+        this._frameType = null;
 
         container.appendChild(this._canvas);
 
@@ -68,49 +76,102 @@ class Client {
 
     _initialize() {
         setInterval(() => {
-            this._prevUpdateTs = this._updateTs;
-            this._updateTs = Date.now();
-            this._update(this._updateTs, this._updateTs - this._prevUpdateTs);
-            this._draw();
+            this._tick();
         }, 1000 / Client.FPS);
+
+        setInterval(() => {
+            this._sendUpdate();
+        }, 1000 / Client.CMD_UPDATE_RATE);
     }
 
-    _update(ts, timeDelta) {
-        let needSendUpdate = false;
+    _tick() {
+        this._prevUpdateTs = this._updateTs;
+        this._updateTs     = Date.now();
+        this._updateAvatar(this._updateTs, this._updateTs - this._prevUpdateTs);
+        this._update(this._updateTs, this._updateTs - this._prevUpdateTs);
+        this._draw();
+    }
 
-        if (this._updateCmdRemains <= 0) {
-            needSendUpdate = true;
-            this._updateCmdRemains = this._updateEvery;
+    _updateAvatar(now, timeDelta) {
+        if (this._avatar.moveDirection.x) {
+            //debugger
+        }
+        this._avatar.position.x += this._avatar.moveDirection.x * timeDelta * Client.SPEED / 1000;
+        this._avatar.position.y += this._avatar.moveDirection.y * timeDelta * Client.SPEED / 1000;
+    }
+
+    _update(now, timeDelta) {
+        if (this._snapshots.length - this._currentIndex >= 2) {
+            // Interpolation
+
+            this._frameType = 'int';
+
+            if (this._interpolationStartTs) {
+                let d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                if (d >= 1) {
+                    this._currentIndex++;
+                    this._startNextInterpolation(now);
+
+                } else {
+                    const curSnapshot  = this._snapshots[this._currentIndex];
+                    const nextSnapshot = this._snapshots[this._currentIndex + 1];
+
+                    for (let i = 0; i < curSnapshot.clients.length; i++) {
+                        if (i === this._avatar.index) {
+                            continue;
+                        }
+
+                        const cClient = curSnapshot.clients[i];
+                        const nClient = nextSnapshot.clients[i];
+                        const client  = this._clients[i];
+
+                        client.position.x = cClient.position.x + (nClient.position.x - cClient.position.x) * d;
+                        client.position.y = cClient.position.y + (nClient.position.y - cClient.position.y) * d;
+                        client.lookDirection = cClient.lookDirection + (nClient.lookDirection - cClient.lookDirection) * d;
+                    }
+                }
+
+            } else {
+                this._startNextInterpolation(now);
+            }
         } else {
-            this._updateCmdRemains -= timeDelta;
+            // Extrapolation
+            this._frameType = 'extr';
         }
+    }
 
-        if (needSendUpdate && this._shooting) {
-            this._shootingLine = {
-                from: { x: this._avatar.position.x, y: this._avatar.position.y },
-                to:   this._shootingPoint
-            };
+    _startNextInterpolation(now) {
+        const curSnapshot = this._snapshots[this._currentIndex];
+        const bufferSize  = this._snapshots.length - this._currentIndex;
+
+        this._interpolationStartTs = now;
+
+        if (bufferSize < 3) {
+            this._speed = 0.9
+        } else if (bufferSize === 3) {
+            this._speed = 1;
+        } else {
+            this._speed = 1.1;
         }
+        //console.log(this._speed);
 
-        const moveDistance = timeDelta * Client.SPEED / 1000;
+        for (let i = 0; i < curSnapshot.clients.length; i++) {
+            if (i === this._avatar.index) {
+                continue;
+            }
 
-        this._avatar.position.x += this._avatar.moveDirection.x * moveDistance;
-        this._avatar.position.y += this._avatar.moveDirection.y * moveDistance;
+            const cClient = curSnapshot.clients[i];
+            let client    = this._clients[i];
 
-        let d = (ts - this._worldUpdateTs) / (1000 / World.TICK_RATE);
+            if (!client) {
+                client = clients[i] = {
+                    id: cClient.id
+                };
+            }
 
-        if (d > 1.25) {
-            d = 1.25;
-        }
-
-        for (let client of this._clients) {
-            client.cur.position.x    = client.prev.position.x + (client.last.position.x - client.prev.position.x) * d;
-            client.cur.position.y    = client.prev.position.y + (client.last.position.y - client.prev.position.y) * d;
-            client.cur.lookDirection = client.prev.lookDirection + (client.last.lookDirection - client.prev.lookDirection) * d;
-        }
-
-        if (needSendUpdate) {
-            this._sendUpdate();
+            client.position      = _.clone(cClient.position);
+            client.lookDirection = cClient.lookDirection;
         }
     }
 
@@ -126,11 +187,24 @@ class Client {
         this._drawMyShootingLine(ctx);
         this._drawRealClientsPositions(ctx);
         this._drawServerClientsPositions(ctx);
+
+        ctx.save();
+
+        //ctx.strokeStyle = '#000';
+        ctx.translate(Client.CANVAS_WIDTH - 20, 20);
+        ctx.beginPath();
+        ctx.arc(0, 0, 15, 0, 2 * Math.PI);
+        ctx.fillStyle = this._frameType === 'int' ? '#0F0' : '#F00';
+        ctx.fill();
+
+        ctx.restore();
     }
 
     _drawClients(ctx) {
         for (let client of this._clients) {
-            this._drawGameClient(ctx, client.cur, false);
+            if (client.id !== this._id) {
+                this._drawGameClient(ctx, client, false);
+            }
         }
     }
 
@@ -151,7 +225,10 @@ class Client {
 
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(Math.sin(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE, -Math.cos(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE);
+        ctx.lineTo(
+            Math.sin(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE,
+            -Math.cos(clientModel.lookDirection) * Client.AVATAR_DIRECTION_SIZE
+        );
         ctx.stroke();
 
         ctx.restore();
@@ -310,58 +387,36 @@ class Client {
 
     onServerMessage(eventName, data) {
         switch (eventName) {
-            case 'updateWorld': {
-                for (let clientModel of data.clients) {
-                    if (this._firstUpdate) {
+            case 'updateWorld':
+                this._snapshots.push(data);
+
+                if (this._snapshots.length === 1) {
+                    for (let i = 0; i < data.clients.length; i++) {
+                        const clientModel = data.clients[i];
+
                         if (clientModel.id === this._id) {
+                            this._avatar.index         = i;
                             this._avatar.position      = clientModel.position;
                             this._avatar.lookDirection = clientModel.lookDirection;
-                        } else {
-                            this._clients.push({
-                                id:   clientModel.id,
-                                prev: {
-                                    position:      clientModel.position,
-                                    lookDirection: clientModel.lookDirection
-                                },
-                                cur:  {
-                                    position:      _.clone(clientModel.position),
-                                    lookDirection: clientModel.lookDirection
-                                },
-                                last: {
-                                    position:      clientModel.position,
-                                    lookDirection: clientModel.lookDirection
-                                }
-                            });
                         }
-                    } else {
-                        // UPDATE
-                        for (let client of this._clients) {
-                            if (client.id === clientModel.id) {
-                                client.prev = client.last;
-                                client.last = {
-                                    position:      clientModel.position,
-                                    lookDirection: clientModel.lookDirection
-                                };
-                            }
-                        }
+
+                        this._clients.push({
+                            id:            clientModel.id,
+                            position:      clientModel.position,
+                            lookDirection: clientModel.lookDirection
+                        });
                     }
+
+                    this._shoots = data.shoots;
+
+                    this._currentTick = data.tick;
                 }
 
-                this._shoots = [];
-
-                for (let shoot of data.shoots) {
-                    this._shoots.push(shoot);
-                }
-
-                if (this._firstUpdate) {
+                if (this._snapshots.length === 2) {
                     this._initialize();
                 }
 
-                this._firstUpdate   = false;
-                this._worldUpdateTs = Date.now();
-
                 break;
-            }
             default: {
                 console.log('Unknown server event', eventName);
             }
@@ -376,7 +431,7 @@ Client.AVATAR_R = 20;
 Client.AVATAR_DIRECTION_SIZE = 30;
 
 Client.FPS = 60;
-Client.CMD_UPDATE_RATE = 33;
+Client.CMD_UPDATE_RATE = 20;
 Client.ONE_WAY_DELAY = 150;
 
 Client.SPEED = 100;

@@ -138,7 +138,7 @@ class World {
         }
 
         return this._frames[this._curFrameIndex] = {
-            id:      this._curFrameId,
+            tick:    this._curFrameId,
             clients: _.cloneDeep(curFrame.clients),
             shoots:  _.cloneDeep(curFrame.shoots)
         };
@@ -146,4 +146,4 @@ class World {
 
 }
 
-World.TICK_RATE = 33;
+World.TICK_RATE = 20;
