@@ -1,8 +1,9 @@
 const SIN_P4 = 0.7071067811865475;
 
 const SMOOTH_TYPE = {
-    INTERPOLATION: 1,
-    EXTRAPOLATION: 2,
+    FIRST_FRAME:            0,
+    INTERPOLATION:          1,
+    EXTRAPOLATION:          2,
     EXTRA_IN_INTERPOLATION: 3
 };
 
@@ -21,7 +22,6 @@ class Client {
         this._canvas.height = Client.CANVAS_HEIGHT;
 
         this.isActive      = false;
-        this._firstUpdate  = true;
         this._prevUpdateTs = this._updateTs = Date.now();
 
         this._updateMoveDirection_bound = this._updateMoveDirection.bind(this);
@@ -54,9 +54,7 @@ class Client {
         this._fpsFramesCount = 0;
         this._fpsStartTs = null;
 
-        this._isFirstRender = true;
-
-        this._type = SMOOTH_TYPE.INTERPOLATION;
+        this._type = SMOOTH_TYPE.FIRST_FRAME;
 
         container.appendChild(this._canvas);
 
@@ -123,101 +121,31 @@ class Client {
             this._fpsStartTs += 1000;
         }
 
-        this._isFirstRender = false;
-
         this._fpsFramesCount++;
     }
 
     _updateAvatar(now, timeDelta) {
-        if (this._avatar.moveDirection.x) {
-            //debugger
-        }
         this._avatar.position.x += this._avatar.moveDirection.x * timeDelta * Client.SPEED / 1000;
         this._avatar.position.y += this._avatar.moveDirection.y * timeDelta * Client.SPEED / 1000;
     }
 
-    _update(now, timeDelta) {
-        let d;
-        let curSnapshot;
-        let nextSnapshot;
+    _processTransition() {
+        const now = this._now;
 
-        if (this._isFirstRender) {
-            this._speed = 1;
-            this._interpolationStartTs = now;
-            this._interpolationEndTs   = now + (1000 / World.TICK_RATE);
+        switch (this._type) {
+            case SMOOTH_TYPE.FIRST_FRAME: {
+                this._speed = 1;
+                this._interpolationStartTs = now;
+                this._interpolationEndTs   = now + (1000 / World.TICK_RATE);
 
-            d = 0;
+                this.log('INTER');
+                this._type = SMOOTH_TYPE.INTERPOLATION;
 
-            curSnapshot  = this._snapshots[this._currentIndex];
-            nextSnapshot = this._snapshots[this._currentIndex + 1];
+                this._processTransition();
 
-        } else {
-            if (this._type === SMOOTH_TYPE.EXTRA_IN_INTERPOLATION) {
-                // Если переход завершен, то переходим к интерполяции
-                if (now >= this._interpolationEndTs) {
-                    this._type = SMOOTH_TYPE.INTERPOLATION;
-
-                    //this._currentIndex++;
-
-                    // COPY PAST FROM INTERPOLATION SECTION
-                    const bufferSize = this._snapshots.length - this._currentIndex;
-
-                    if (bufferSize < 3) {
-                        this._speed = 0.9
-                    } else if (bufferSize === 3) {
-                        this._speed = 1;
-                    } else {
-                        this._speed = 1.1;
-                    }
-
-                    this._interpolationStartTs = this._interpolationEndTs;
-                    this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE) / this._speed;
-
-                    if (!this._interpolationStartTs) {
-                        debugger
-                    }
-                    d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-
-                    curSnapshot  = this._snapshots[this._currentIndex];
-                    nextSnapshot = this._snapshots[this._currentIndex + 1];
-
-                // В противном случае продолжаем переход
-                } else {
-                    d = (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-
-                    curSnapshot  = this._extrapolation;
-                    nextSnapshot = this._snapshots[this._currentIndex];
-                }
-
-            } else if (this._type === SMOOTH_TYPE.EXTRAPOLATION) {
-                // если появились пакеты в буфере, то начинаем переход от экстра- к интерполяции
-                if (this._snapshots.length - this._currentIndex >= 2) {
-                    this._extrapolation = {
-                        clients: this._clients.map(client => _.cloneDeep(client))
-                    };
-
-                    this._interpolationStartTs = now;
-                    this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE);
-                    d = 0;
-
-                    curSnapshot  = this._snapshots[this._currentIndex - 1];
-                    nextSnapshot = this._snapshots[this._currentIndex];
-
-                    this._type = SMOOTH_TYPE.EXTRA_IN_INTERPOLATION;
-                } else {
-                    // Иначе продолжаем экстраполяцию, но не далее 250ms
-
-                    if (now >= this._interpolationEndTs) {
-                        d = 1 + EXTRAPOLATION_PERIOD / (1000 / World.TICK_RATE);
-                    } else {
-                        d = 1 + (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-                    }
-
-                    curSnapshot  = this._snapshots[this._currentIndex - 1];
-                    nextSnapshot = this._snapshots[this._currentIndex];
-                }
-
-            } else if (this._type === SMOOTH_TYPE.INTERPOLATION) {
+                break;
+            }
+            case SMOOTH_TYPE.INTERPOLATION: {
                 if (now >= this._interpolationEndTs) {
                     this._currentIndex++;
 
@@ -233,56 +161,115 @@ class Client {
                             this._speed = 1.1;
                         }
 
+                        //console.log('new transition, speed:', this._speed);
+
                         this._interpolationStartTs = this._interpolationEndTs;
                         this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE) / this._speed;
 
-                        if (!this._interpolationStartTs) {
-                            debugger
-                        }
-                        d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                        this._processTransition();
 
-                        curSnapshot  = this._snapshots[this._currentIndex];
-                        nextSnapshot = this._snapshots[this._currentIndex + 1];
-
-                    // Если нет, то переходим в экстраполяцию
                     } else {
+                        // Если нет, то переходим в экстраполяцию
+                        this.log('EXTRA');
+
                         this._type = SMOOTH_TYPE.EXTRAPOLATION;
                         this._interpolationStartTs = this._interpolationEndTs;
                         this._interpolationEndTs   = this._interpolationStartTs + EXTRAPOLATION_PERIOD;
 
-                        if (now >= this._interpolationEndTs) {
-                            d = 1 + EXTRAPOLATION_PERIOD / (1000 / World.TICK_RATE);
-                        } else {
-                            d = 1 + (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
-                        }
-
-                        curSnapshot  = this._snapshots[this._currentIndex - 1];
-                        nextSnapshot = this._snapshots[this._currentIndex];
-
-                        if (!curSnapshot) {
-                            debugger
-                        }
+                        this._processTransition();
                     }
 
                 } else {
                     if (!this._interpolationStartTs) {
                         debugger
                     }
-                    d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                    this._d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
 
-                    curSnapshot  = this._snapshots[this._currentIndex];
-                    nextSnapshot = this._snapshots[this._currentIndex + 1];
+                    this._curSnapshot  = this._snapshots[this._currentIndex];
+                    this._nextSnapshot = this._snapshots[this._currentIndex + 1];
                 }
+
+                break;
+            }
+            case SMOOTH_TYPE.EXTRAPOLATION: {
+                // если появились пакеты в буфере, то начинаем переход от экстра- к интерполяции
+                if (this._snapshots.length - this._currentIndex >= 2) {
+                    this._extrapolation = {
+                        clients: this._clients.map(client => _.cloneDeep(client))
+                    };
+
+                    this._interpolationStartTs = now;
+                    this._interpolationEndTs   = this._interpolationStartTs + (1000 / World.TICK_RATE);
+                    // this._d = 0;
+                    //
+                    // this._curSnapshot  = this._snapshots[this._currentIndex - 1];
+                    // this._nextSnapshot = this._snapshots[this._currentIndex];
+
+                    this.log('EXTRA -> INTER');
+
+                    this._type = SMOOTH_TYPE.EXTRA_IN_INTERPOLATION;
+
+                    this._processTransition();
+
+                } else {
+                    // Иначе продолжаем экстраполяцию, но не далее 250ms
+
+                    if (now >= this._interpolationEndTs) {
+                        this._d = 1 + EXTRAPOLATION_PERIOD / (1000 / World.TICK_RATE);
+                    } else {
+                        this._d = 1 + (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                    }
+
+                    this._curSnapshot  = this._snapshots[this._currentIndex - 1];
+                    this._nextSnapshot = this._snapshots[this._currentIndex];
+                }
+                break;
+            }
+            case SMOOTH_TYPE.EXTRA_IN_INTERPOLATION: {
+                // Если переход завершен, то переходим к интерполяции
+                if (now >= this._interpolationEndTs) {
+                    this.log('INTER');
+
+                    this._type = SMOOTH_TYPE.INTERPOLATION;
+
+                    // Убавляем индекс для правильной работы интерполяции
+                    this._currentIndex--;
+                    this._processTransition();
+
+                } else {
+                    // В противном случае продолжаем переход
+                    this._d = (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+
+                    this._curSnapshot  = this._extrapolation;
+                    this._nextSnapshot = this._snapshots[this._currentIndex];
+                }
+                break;
             }
         }
+    }
 
-        this.log('RENDER', this._type, 'd:', d);
+    _update(now, timeDelta) {
+        this._now = now;
 
-        if (d > 5) {
-            //debugger
+        this._d = null;
+        this._curSnapshot  = null;
+        this._nextSnapshot = null;
+
+        this._processTransition();
+
+        if (this._d > 2) {
+            debugger
         }
 
+        const d            = this._d;
+        const curSnapshot  = this._curSnapshot;
+        const nextSnapshot = this._nextSnapshot;
+
         if (!curSnapshot) {
+            debugger
+        }
+
+        if (!nextSnapshot) {
             debugger
         }
 
@@ -301,6 +288,10 @@ class Client {
                     position:      _.clone(cClient.position),
                     lookDirection: cClient.lookDirection
                 };
+            }
+
+            if (!nClient) {
+                debugger
             }
 
             client.position.x = cClient.position.x + (nClient.position.x - cClient.position.x) * d;
@@ -542,6 +533,8 @@ class Client {
     onServerMessage(eventName, data) {
         switch (eventName) {
             case 'updateWorld':
+                //this.log('UP', new Date().toJSON());
+
                 this._snapshots.push(data);
 
                 if (this._snapshots.length === 1) {
