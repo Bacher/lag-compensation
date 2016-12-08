@@ -1,6 +1,5 @@
-const USE_LAGS     = true;
-const EXTRA_DELAY  = 50;
-const DELAY_CHANCE = 20; // percent
+const USE_LAGS        = true;
+const MAX_EXTRA_DELAY = 100;
 
 class ClientConnection {
 
@@ -74,8 +73,8 @@ class ClientConnection {
     }
 
     _getDelay() {
-        if (USE_LAGS && Math.random() < DELAY_CHANCE / 100) {
-            return ClientConnection.ONE_WAY_DELAY + EXTRA_DELAY;
+        if (USE_LAGS) {
+            return ClientConnection.ONE_WAY_DELAY + Math.floor(MAX_EXTRA_DELAY * Math.random());
         } else {
             return ClientConnection.ONE_WAY_DELAY;
         }

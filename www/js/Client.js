@@ -170,7 +170,7 @@ class Client {
 
                     } else {
                         // Если нет, то переходим в экстраполяцию
-                        this.log('EXTRA');
+                        this.log('EXTRA!!!');
 
                         this._type = SMOOTH_TYPE.EXTRAPOLATION;
                         this._interpolationStartTs = this._interpolationEndTs;
@@ -183,7 +183,7 @@ class Client {
                     if (!this._interpolationStartTs) {
                         debugger
                     }
-                    this._d = this._speed * (now - this._interpolationStartTs) / (1000 / World.TICK_RATE);
+                    this._d = (now - this._interpolationStartTs) / ((1000 / World.TICK_RATE) / this._speed);
 
                     this._curSnapshot  = this._snapshots[this._currentIndex];
                     this._nextSnapshot = this._snapshots[this._currentIndex + 1];
@@ -192,6 +192,7 @@ class Client {
                 break;
             }
             case SMOOTH_TYPE.EXTRAPOLATION: {
+                console.log('ex____');
                 // если появились пакеты в буфере, то начинаем переход от экстра- к интерполяции
                 if (this._snapshots.length - this._currentIndex >= 2) {
                     this._extrapolation = {
@@ -226,6 +227,7 @@ class Client {
                 break;
             }
             case SMOOTH_TYPE.EXTRA_IN_INTERPOLATION: {
+                console.log('ex->>int____');
                 // Если переход завершен, то переходим к интерполяции
                 if (now >= this._interpolationEndTs) {
                     this.log('INTER');
@@ -579,6 +581,5 @@ Client.AVATAR_DIRECTION_SIZE = 30;
 
 Client.FPS = 60;
 Client.CMD_UPDATE_RATE = 20;
-Client.ONE_WAY_DELAY = 150;
 
 Client.SPEED = 100;
