@@ -34,6 +34,22 @@ class Server {
     }
 
     _update() {
+        if (this._commands.length === 0) {
+            this._snapshots.push({
+                snapshotId: this._snapshotId,
+                object:     {
+                    position: { x: 0, y: 0 },
+                    moveDirection: { x: 0, y: 0 }
+                }
+            });
+
+            this._draw();
+
+            connection.sendMessageToClient('snapshot', this._snapshots[this._snapshots.length - 1]);
+
+            return;
+        }
+
         const prevSnapshot = this._snapshots[this._snapshotIndex];
 
         this._snapshotId++;
@@ -47,93 +63,114 @@ class Server {
             }
         };
 
-        if (this._clientState.delta === null && this._commands.length) {
-            this._clientState.delta = this._snapshotId - this._commands[0].snapshotId;
+        if (this._clientState.delta === null) {
+            this._clientState.delta = newSnapshot.snapshotId - this._commands[0].snapshotId;
         }
 
         const commandsCount = this._commands.length - this._curCommandIndex - 1;
-        const command = commandsCount ? this._commands[this._curCommandIndex + 1].object : null;
-        const prevCommand = this._commands[this._curCommandIndex].object;
+        const command       = commandsCount ? this._commands[this._curCommandIndex + 1].object : null;
+        const prevCommand   = this._curCommandIndex !== -1 ? this._commands[this._curCommandIndex].object : null;
+        const nextCommand   = commandsCount >= 2 ? this._commands[this._curCommandIndex + 2].object : null;
+        const lastCommand   = this._commands[this._commands.length - 1];
+        // больше нуля - спешат, меньше нуля - задерживаются
+        const ppDelta       = this._clientState.delta - (newSnapshot.snapshotId - lastCommand.snapshotId);
 
-        if (this._clientState.subDelta < 0) {
+        if (ppDelta < 0 || this._clientState.subDelta < 0) {
             if (commandsCount === 0) {
                 // ТУТ ПОКА ХЗ
-            } else if (commandsCount === 1) {
-                this._clientState.subDelta--;
+                // Жопа, продолжаем экстраполировать и замедляемся
+                // У идеале тут уже надо начинать применять экстраполированные данные к пользователю (сопротивляться его вводу)
 
-                if (this._clientState.subDelta === -5) {
+                if (this._clientState.subDelta === -4) {
+                    this._clientState.subDelta = 0;
+                    this._clientState.delta++;
+                }
+
+                newSnapshot.object.position.x = prevSnapshot.object.position.x + prevCommand.moveDirection.x * 0.8;
+
+            } else {
+                this._curCommandIndex++;
+
+                if (commandsCount === 1 && this._clientState.subDelta === -4) {
                     this._clientState.subDelta = 0;
                     this._clientState.delta++;
 
                     // Рендерим обычный кадр
                     newSnapshot.object.position.x = command.position.x;
+
                 } else {
-                    // Экстраполяция с коррекцией
-                    if (this._clientState.subDelta === -2) {
-                        const x1 = prevSnapshot.object.position.x + mix(prevCommand.moveDirection.x, command.moveDirection.x, 0.7) * 0.8;
-                        const x2 = command.position.x + command.moveDirection.x * 0.6 * 0.8;
-
-                        newSnapshot.object.position.x = mix(x1, x2, 0.5);
-
-                    } else if (this._clientState.subDelta === -3) {
-                        const x1 = prevSnapshot.object.position.x + mix(prevCommand.moveDirection.x, command.moveDirection.x, 0.5) * 0.8;
-                        const x2 = command.position.x + command.moveDirection.x * 0.4 * 0.8;
-
-                        newSnapshot.object.position.x = mix(x1, x2, 0.5);
-                    } else if (this._clientState.subDelta === -4) {
-                        const x1 = prevSnapshot.object.position.x + mix(prevCommand.moveDirection.x, command.moveDirection.x, 0.3) * 0.8;
-                        const x2 = command.position.x + command.moveDirection.x * 0.4 * 0.8;
-
-                        newSnapshot.object.position.x = mix(x1, x2, 0.5);
+                    if (commandsCount === 1) {
+                        // находимся в задержке, приближаемся к концу замедления
+                        this._clientState.subDelta--;
+                    } else {
+                        // имеем избыток команд, но находимся в экстраполяции
+                        // уменьшаем отрыв
+                        this._clientState.subDelta++;
                     }
+
+                    // Экстраполяция с запозданием (* 0.2 = * 2 / 10)
+                    newSnapshot.object.position.x = command.position.x + command.moveDirection.x * (1 + this._clientState.subDelta * 0.2) * 0.8;
                 }
             }
-        } else if (this._clientState.subDelta > 0) {
+        } else if (ppDelta > 0 || this._clientState.subDelta > 0) {
+            if (commandsCount >= 2) {
+                this._curCommandIndex++;
+
+                if (this._clientState.subDelta === 4) {
+                    this._clientState.subDelta = 0;
+                    this._clientState.delta--;
+
+                    this._curCommandIndex++;
+
+                    newSnapshot.object.position.x = nextCommand.position.x;
+
+                } else {
+                    this._clientState.subDelta++;
+
+                    newSnapshot.object.position.x = mix(command.position.x, nextCommand.position.x, this._clientState.subDelta * 0.2);
+                }
+            } else if (commandsCount === 1) {
+                this._curCommandIndex++;
+
+                if (this._clientState.subDelta === -4) {
+                    this._clientState.subDelta = 0;
+                    this._clientState.delta++;
+
+                    newSnapshot.object.position.x = command.position.x;
+                } else {
+                    this._clientState.subDelta--;
+
+                    newSnapshot.object.position.x = command.position.x + lastCommand.moveDirection.x * this._clientState.subDelta * 0.2;
+                }
+
+            } else {
+                // Нет команд
+                if (this._clientState.subDelta === -4) {
+                    this._clientState.subDelta = 0;
+                    this._clientState.delta++;
+
+                } else {
+                    this._clientState.subDelta--;
+                }
+
+                newSnapshot.object.position.x = prevSnapshot.object.position.x + lastCommand.moveDirection.x * 0.8;
+            }
 
         } else {
             if (commandsCount === 0) {
                 this._clientState.subDelta--;
 
                 // Экстраполяция 80%
-                newSnapshot.object.position.x = prevSnapshot.object.position.x + prevSnapshot.object.moveDirection.x * 0.8;
-                newSnapshot.object.position.y = prevSnapshot.object.position.y + prevSnapshot.object.moveDirection.y * 0.8;
+                newSnapshot.object.position.x = prevSnapshot.object.position.x + lastCommand.moveDirection.x * 0.8;
 
             } else if (commandsCount === 1) {
                 // Норма
+                newSnapshot.object.position.x = command.position.x;
 
             } else {
-                // -------
-            }
-        }
-
-
-
-        if (commandsCount === 0) {
-            this._clientState.subDelta--;
-        } else {
-            if (commandsCount > 1) {
                 this._clientState.subDelta++;
-            }
 
-            this._curCommandIndex++;
-
-            const command = this._commands[this._curCommandIndex];
-
-            if (!command) {
-                debugger
-            }
-
-            newSnapshot.object.position.x = command.object.position.x;
-            newSnapshot.object.position.y = command.object.position.y;
-            newSnapshot.object.moveDirection.x = command.object.moveDirection.x;
-            newSnapshot.object.moveDirection.y = command.object.moveDirection.y;
-        }
-
-        if (this._commands.length === 0) {
-
-        } else {
-            if (this._commands.length > 1) {
-                this._clientState.subDelta += 0.2;
+                newSnapshot.object.position.x = mix(command.position.x, nextCommand.position.x, this._clientState.subDelta * 0.2);
             }
         }
 
